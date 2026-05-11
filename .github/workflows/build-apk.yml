@@ -1,4 +1,4 @@
-name: Build debug APK
+name: FocusTV Build APK
 
 on:
   push:
