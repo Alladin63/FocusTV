@@ -1,0 +1,3 @@
+export const TMDB_TOKEN = "eyJhbGciOiJIUzI1NiJ9.eyJhdWQiOiJiNWYwZTJlMjg0NDBiZTkwMDQ1NjdlYjhkNDc2ZjNhNyIsIm5iZiI6MTYxMTcxODU0MS43MzQwMDAyLCJzdWIiOiI2MDEwZGY4ZGIyZTA3NDAwM2UwZGE5NWUiLCJzY29wZXMiOlsiYXBpX3JlYWQiXSwidmVyc2lvbiI6MX0.qcAxDsutzUowjCEG1nbN69FiFP4ubPOShqwWJAOdEaM";
+export const FANART_TOKEN = "0e36f330ee830e40c9329a04ec3319e9";
+export const EPG_URL_OR_TOKEN = "https://xmltvfr.fr/xmltv/xmltv.zip";
