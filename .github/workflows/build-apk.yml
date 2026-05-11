@@ -11,6 +11,10 @@ permissions:
   actions: read
   issues: write
 
+concurrency:
+  group: focustv-build-${{ github.ref }}
+  cancel-in-progress: true
+
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
