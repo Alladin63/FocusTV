@@ -1,0 +1,204 @@
+name: Build debug APK
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+  issues: write
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+jobs:
+  build:
+    name: Build debug APK
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Prepare report folder
+        run: |
+          mkdir -p build_reports
+          echo "# FocusTV - Rapport de build" > build_reports/BUILD_ERROR_REPORT.md
+          echo "" >> build_reports/BUILD_ERROR_REPORT.md
+          echo "- Date UTC : $(date -u)" >> build_reports/BUILD_ERROR_REPORT.md
+          echo "- Repository : $GITHUB_REPOSITORY" >> build_reports/BUILD_ERROR_REPORT.md
+          echo "- Branche : $GITHUB_REF_NAME" >> build_reports/BUILD_ERROR_REPORT.md
+          echo "- Commit : $GITHUB_SHA" >> build_reports/BUILD_ERROR_REPORT.md
+          echo "- Run : https://github.com/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" >> build_reports/BUILD_ERROR_REPORT.md
+          echo "" >> build_reports/BUILD_ERROR_REPORT.md
+
+      - name: Setup Java
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: "20"
+          cache: npm
+
+      - name: Install npm dependencies
+        run: |
+          set -o pipefail
+          echo "## Installation npm" >> build_reports/BUILD_ERROR_REPORT.md
+          if [ -f package-lock.json ]; then
+            npm ci 2>&1 | tee build_reports/npm_install.log
+          elif [ -f package.json ]; then
+            npm install 2>&1 | tee build_reports/npm_install.log
+          else
+            echo "package.json introuvable." | tee build_reports/npm_install.log
+            exit 1
+          fi
+
+      - name: Check Android project
+        run: |
+          echo "## Vérification Android" >> build_reports/BUILD_ERROR_REPORT.md
+
+          if [ ! -d android ]; then
+            echo "ERREUR : dossier android introuvable." | tee -a build_reports/android_check.log
+            echo "" >> build_reports/BUILD_ERROR_REPORT.md
+            echo "### Erreur principale détectée" >> build_reports/BUILD_ERROR_REPORT.md
+            echo "Le dossier android est absent. Le projet contient le code React Native, mais pas le projet Android Gradle complet." >> build_reports/BUILD_ERROR_REPORT.md
+            echo "" >> build_reports/BUILD_ERROR_REPORT.md
+            echo "Solution : ajouter ou générer le dossier android avant de compiler l'APK." >> build_reports/BUILD_ERROR_REPORT.md
+            exit 1
+          fi
+
+          if [ ! -f android/gradlew ]; then
+            echo "ERREUR : android/gradlew introuvable." | tee -a build_reports/android_check.log
+            echo "" >> build_reports/BUILD_ERROR_REPORT.md
+            echo "### Erreur principale détectée" >> build_reports/BUILD_ERROR_REPORT.md
+            echo "Le fichier android/gradlew est absent. Gradle ne peut pas compiler l'APK." >> build_reports/BUILD_ERROR_REPORT.md
+            exit 1
+          fi
+
+          echo "Projet Android détecté." | tee -a build_reports/android_check.log
+
+      - name: Build APK with full Gradle logs
+        run: |
+          set -o pipefail
+          cd android
+          chmod +x ./gradlew
+          ./gradlew assembleDebug --stacktrace --info --warning-mode all 2>&1 | tee ../build_reports/gradle_build.log
+
+      - name: Copy APK
+        if: success()
+        run: |
+          mkdir -p release_apk
+          find android/app/build/outputs/apk -name "*.apk" -type f -print0 | while IFS= read -r -d '' apk; do
+            cp "$apk" release_apk/
+          done
+
+      - name: Upload APK
+        if: success()
+        uses: actions/upload-artifact@v6
+        with:
+          name: FocusTV-debug-apk
+          path: release_apk/*.apk
+          if-no-files-found: error
+
+      - name: Complete error report
+        if: failure()
+        run: |
+          REPORT="build_reports/BUILD_ERROR_REPORT.md"
+
+          echo "" >> "$REPORT"
+          echo "## Résumé automatique" >> "$REPORT"
+          echo "" >> "$REPORT"
+
+          if [ -f build_reports/android_check.log ]; then
+            echo "### Vérification Android" >> "$REPORT"
+            echo '```text' >> "$REPORT"
+            cat build_reports/android_check.log >> "$REPORT"
+            echo '```' >> "$REPORT"
+          fi
+
+          if [ -f build_reports/npm_install.log ]; then
+            echo "" >> "$REPORT"
+            echo "### Fin des logs npm" >> "$REPORT"
+            echo '```text' >> "$REPORT"
+            tail -n 120 build_reports/npm_install.log >> "$REPORT"
+            echo '```' >> "$REPORT"
+          fi
+
+          if [ -f build_reports/gradle_build.log ]; then
+            echo "" >> "$REPORT"
+            echo "### Fin des logs Gradle" >> "$REPORT"
+            echo '```text' >> "$REPORT"
+            tail -n 220 build_reports/gradle_build.log >> "$REPORT"
+            echo '```' >> "$REPORT"
+          fi
+
+          echo "" >> "$REPORT"
+          echo "## Arborescence utile" >> "$REPORT"
+          echo '```text' >> "$REPORT"
+          find . -maxdepth 3 -type f | sort | sed 's#^./##' | head -n 300 >> "$REPORT"
+          echo '```' >> "$REPORT"
+
+      - name: Upload error report
+        if: failure()
+        uses: actions/upload-artifact@v6
+        with:
+          name: FocusTV-error-report
+          path: build_reports/
+          if-no-files-found: warn
+
+      - name: Create GitHub issue on failure
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          import urllib.request
+
+          repo = os.environ.get("GITHUB_REPOSITORY")
+          token = os.environ.get("GH_TOKEN")
+          run_id = os.environ.get("GITHUB_RUN_ID")
+          run_number = os.environ.get("GITHUB_RUN_NUMBER")
+          report_path = "build_reports/BUILD_ERROR_REPORT.md"
+
+          title = "Build APK échoué - FocusTV #{}".format(run_number)
+
+          if os.path.exists(report_path):
+              with open(report_path, "r", encoding="utf-8") as f:
+                  body = f.read()
+          else:
+              body = "# Build APK échoué\n\nRapport non généré correctement."
+
+          body += "\n\nLien du run : https://github.com/{}/actions/runs/{}\n".format(repo, run_id)
+
+          payload = json.dumps({
+              "title": title,
+              "body": body,
+              "labels": ["build-error", "apk", "FocusTV"]
+          }).encode("utf-8")
+
+          req = urllib.request.Request(
+              "https://api.github.com/repos/{}/issues".format(repo),
+              data=payload,
+              headers={
+                  "Authorization": "Bearer {}".format(token),
+                  "Accept": "application/vnd.github+json",
+                  "Content-Type": "application/json"
+              },
+              method="POST"
+          )
+
+          try:
+              with urllib.request.urlopen(req, timeout=30) as response:
+                  print(response.read().decode("utf-8"))
+          except Exception as e:
+              print("Issue GitHub non créée automatiquement :", e)
+          PY
