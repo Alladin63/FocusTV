@@ -1,40 +1,20 @@
 # FocusTV
 
-FocusTV est une base d’application IPTV Android TV / Fire TV Stick, générée automatiquement.
+Application IPTV TV/Firestick générée par le script QPython.
 
-## Objectif
+## Inclus
 
-- Interface sombre, TV-friendly, bleu électrique + violet néon.
-- Navigation 100 % télécommande.
-- Home, Live TV, VOD, Séries, Favoris, Profils, Paramètres.
-- Sources M3U/M3U8, Xtream Codes, portail Stalker générique.
-- EPG XMLTV.
-- TMDB + Fanart pour métadonnées, affiches, fonds.
-- Player Media3 / ExoPlayer.
+- Structure React Native
+- Écrans Live, VOD, Séries, Sources, Paramètres, Lecteur
+- Moteur M3U de base
+- Préparation Xtream Codes
+- Workflow GitHub Actions
+- Rapport d'erreur automatique si le build APK échoue
 
-## Sécurité
+## En cas d'échec du build
 
-FocusTV ne fournit aucun flux IPTV. Utilise uniquement des playlists, serveurs ou contenus que tu as le droit d’utiliser.
+Regarde dans GitHub Actions :
 
-## Secrets
-
-Les tokens sont lus depuis `focustv-secrets.properties`, ignoré par Git.
-
-Exemple :
-
-```properties
-TMDB_TOKEN=...
-FANART_TOKEN=...
-EPG_URL=https://...
-```
-
-Dans GitHub Actions, ajoute les secrets :
-- `TMDB_TOKEN`
-- `FANART_TOKEN`
-- `EPG_URL`
-
-## Build
-
-```bash
-gradle assembleDebug
-```
+- `FocusTV-error-report`
+- `BUILD_ERROR_REPORT.md`
+- l'Issue créée automatiquement si les permissions le permettent
