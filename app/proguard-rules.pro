@@ -1,4 +1,0 @@
--keep class kotlinx.serialization.** { *; }
--keep class com.focustv.app.core.** { *; }
--dontwarn okhttp3.**
--dontwarn okio.**

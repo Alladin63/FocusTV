@@ -35,6 +35,11 @@ jobs:
           echo "- Commit : $GITHUB_SHA" >> build_reports/BUILD_ERROR_REPORT.md
           echo "- Run : https://github.com/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" >> build_reports/BUILD_ERROR_REPORT.md
           echo "" >> build_reports/BUILD_ERROR_REPORT.md
+          echo "## Environnement initial" >> build_reports/BUILD_ERROR_REPORT.md
+          echo '```text' >> build_reports/BUILD_ERROR_REPORT.md
+          uname -a >> build_reports/BUILD_ERROR_REPORT.md
+          pwd >> build_reports/BUILD_ERROR_REPORT.md
+          echo '```' >> build_reports/BUILD_ERROR_REPORT.md
 
       - name: Setup Java
         uses: actions/setup-java@v4
@@ -42,52 +47,78 @@ jobs:
           distribution: temurin
           java-version: "17"
 
-      - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
-
-      - name: Install Android packages
-        run: |
-          set -o pipefail
-          yes | sdkmanager --licenses >/dev/null
-          sdkmanager "platform-tools" "platforms;android-35" "build-tools;35.0.0" 2>&1 | tee build_reports/android_sdk.log
-
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: "8.10.2"
 
-      - name: Validate Android project
+      - name: Prepare Android SDK
         run: |
           set -o pipefail
-          echo "## Vérification Android" >> build_reports/BUILD_ERROR_REPORT.md
 
-          if [ ! -f settings.gradle.kts ]; then
-            echo "ERREUR : settings.gradle.kts introuvable." | tee build_reports/android_check.log
+          echo "ANDROID_HOME=${ANDROID_HOME}" | tee build_reports/android_sdk.log
+          echo "ANDROID_SDK_ROOT=${ANDROID_SDK_ROOT}" | tee -a build_reports/android_sdk.log
+
+          if [ -z "$ANDROID_HOME" ]; then
+            if [ -n "$ANDROID_SDK_ROOT" ]; then
+              echo "ANDROID_HOME=$ANDROID_SDK_ROOT" >> "$GITHUB_ENV"
+              export ANDROID_HOME="$ANDROID_SDK_ROOT"
+            else
+              echo "ANDROID_HOME=/usr/local/lib/android/sdk" >> "$GITHUB_ENV"
+              export ANDROID_HOME="/usr/local/lib/android/sdk"
+            fi
+          fi
+
+          echo "$ANDROID_HOME/platform-tools" >> "$GITHUB_PATH"
+          echo "$ANDROID_HOME/cmdline-tools/latest/bin" >> "$GITHUB_PATH"
+
+          SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+
+          if [ ! -f "$SDKMANAGER" ]; then
+            SDKMANAGER="$(find "$ANDROID_HOME" -name sdkmanager -type f | head -n 1)"
+          fi
+
+          if [ -z "$SDKMANAGER" ] || [ ! -f "$SDKMANAGER" ]; then
+            echo "ERREUR : sdkmanager introuvable." | tee -a build_reports/android_sdk.log
+            find "$ANDROID_HOME" -maxdepth 4 -type f | sort | tee -a build_reports/android_sdk.log
             exit 1
           fi
 
-          if [ ! -f build.gradle.kts ]; then
-            echo "ERREUR : build.gradle.kts introuvable." | tee build_reports/android_check.log
-            exit 1
-          fi
+          echo "sdkmanager utilisé : $SDKMANAGER" | tee -a build_reports/android_sdk.log
+          "$SDKMANAGER" --version 2>&1 | tee -a build_reports/android_sdk.log
+          yes | "$SDKMANAGER" --licenses 2>&1 | tee -a build_reports/android_sdk.log || true
+          "$SDKMANAGER" "platform-tools" "platforms;android-35" "build-tools;35.0.0" 2>&1 | tee -a build_reports/android_sdk.log
 
-          if [ ! -f android_app/build.gradle.kts ]; then
-            echo "ERREUR : android_app/build.gradle.kts introuvable." | tee build_reports/android_check.log
-            exit 1
-          fi
+      - name: Validate project files
+        run: |
+          set -o pipefail
 
-          if [ ! -f android_app/src/main/AndroidManifest.xml ]; then
-            echo "ERREUR : AndroidManifest.xml introuvable." | tee build_reports/android_check.log
-            exit 1
-          fi
+          echo "## Vérification fichiers projet" >> build_reports/BUILD_ERROR_REPORT.md
 
-          echo "Projet Android natif détecté." | tee build_reports/android_check.log
+          REQUIRED_FILES=(
+            "settings.gradle.kts"
+            "build.gradle.kts"
+            "gradle.properties"
+            "android_app/build.gradle.kts"
+            "android_app/src/main/AndroidManifest.xml"
+            "android_app/src/main/java/com/focustv/MainActivity.java"
+          )
 
-      - name: Build APK with Gradle
+          for f in "${REQUIRED_FILES[@]}"; do
+            if [ ! -f "$f" ]; then
+              echo "ERREUR : fichier manquant : $f" | tee -a build_reports/project_check.log
+              exit 1
+            fi
+          done
+
+          echo "Tous les fichiers requis sont présents." | tee build_reports/project_check.log
+          find . -maxdepth 4 -type f | sort | sed 's#^./##' | tee build_reports/tree_before_build.log
+
+      - name: Build APK
         run: |
           set -o pipefail
           gradle --version 2>&1 | tee build_reports/gradle_version.log
-          gradle :android_app:assembleDebug --stacktrace --warning-mode all 2>&1 | tee build_reports/gradle_build.log
+          gradle :android_app:assembleDebug --stacktrace --info --warning-mode all 2>&1 | tee build_reports/gradle_build.log
 
       - name: Copy APK
         if: success()
@@ -115,41 +146,20 @@ jobs:
           echo "## Résumé automatique" >> "$REPORT"
           echo "" >> "$REPORT"
 
-          if [ -f build_reports/android_check.log ]; then
-            echo "### Vérification Android" >> "$REPORT"
-            echo '```text' >> "$REPORT"
-            cat build_reports/android_check.log >> "$REPORT"
-            echo '```' >> "$REPORT"
-          fi
-
-          if [ -f build_reports/android_sdk.log ]; then
-            echo "" >> "$REPORT"
-            echo "### Logs Android SDK" >> "$REPORT"
-            echo '```text' >> "$REPORT"
-            tail -n 120 build_reports/android_sdk.log >> "$REPORT"
-            echo '```' >> "$REPORT"
-          fi
-
-          if [ -f build_reports/gradle_version.log ]; then
-            echo "" >> "$REPORT"
-            echo "### Version Gradle" >> "$REPORT"
-            echo '```text' >> "$REPORT"
-            cat build_reports/gradle_version.log >> "$REPORT"
-            echo '```' >> "$REPORT"
-          fi
-
-          if [ -f build_reports/gradle_build.log ]; then
-            echo "" >> "$REPORT"
-            echo "### Fin des logs Gradle" >> "$REPORT"
-            echo '```text' >> "$REPORT"
-            tail -n 220 build_reports/gradle_build.log >> "$REPORT"
-            echo '```' >> "$REPORT"
-          fi
+          for f in build_reports/project_check.log build_reports/android_sdk.log build_reports/gradle_version.log build_reports/gradle_build.log build_reports/tree_before_build.log; do
+            if [ -f "$f" ]; then
+              echo "" >> "$REPORT"
+              echo "### $f" >> "$REPORT"
+              echo '```text' >> "$REPORT"
+              tail -n 240 "$f" >> "$REPORT"
+              echo '```' >> "$REPORT"
+            fi
+          done
 
           echo "" >> "$REPORT"
-          echo "## Arborescence utile" >> "$REPORT"
+          echo "## Arborescence utile finale" >> "$REPORT"
           echo '```text' >> "$REPORT"
-          find . -maxdepth 4 -type f | sort | sed 's#^./##' | head -n 500 >> "$REPORT"
+          find . -maxdepth 5 -type f | sort | sed 's#^./##' | head -n 700 >> "$REPORT"
           echo '```' >> "$REPORT"
 
       - name: Upload error report

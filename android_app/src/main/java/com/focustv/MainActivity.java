@@ -6,10 +6,10 @@ import android.graphics.Color;
 import android.graphics.Typeface;
 import android.view.Gravity;
 import android.view.KeyEvent;
+import android.view.View;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 import android.widget.Button;
-import android.view.View;
 
 public class MainActivity extends Activity {
 
@@ -41,14 +41,20 @@ public class MainActivity extends Activity {
         menu.addView(logo);
 
         String[] items = new String[] {"Live TV", "Films", "Séries", "Sources IPTV", "Paramètres"};
-        for (String item : items) {
+        for (int i = 0; i < items.length; i++) {
             Button button = new Button(this);
-            button.setText(item);
+            button.setText(items[i]);
             button.setTextSize(18);
             button.setAllCaps(false);
             button.setFocusable(true);
             button.setPadding(12, 12, 12, 12);
-            button.setOnClickListener(v -> status.setText("Section sélectionnée : " + ((Button) v).getText()));
+            button.setOnClickListener(new View.OnClickListener() {
+                @Override
+                public void onClick(View v) {
+                    Button b = (Button) v;
+                    status.setText("Section sélectionnée : " + b.getText());
+                }
+            });
             menu.addView(button, new LinearLayout.LayoutParams(
                     LinearLayout.LayoutParams.MATCH_PARENT,
                     72
