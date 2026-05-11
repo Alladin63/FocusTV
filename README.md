@@ -9,6 +9,7 @@ Application IPTV TV/Firestick générée par le script QPython.
 - Moteur M3U de base
 - Préparation Xtream Codes
 - Workflow GitHub Actions
+- Module Android natif buildable dans `android_app/`
 - Rapport d'erreur automatique si le build APK échoue
 
 ## En cas d'échec du build

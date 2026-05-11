@@ -15,4 +15,4 @@ dependencyResolutionManagement {
 }
 
 rootProject.name = "FocusTV"
-include(":app")
+include(":android_app")
