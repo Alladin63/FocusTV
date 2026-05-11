@@ -1,0 +1,21 @@
+# Secrets locaux
+focustv-secrets.properties
+focustv_config.json
+.env
+local.properties
+
+# Android / Gradle
+.gradle/
+build/
+app/build/
+captures/
+.externalNativeBuild/
+.cxx/
+
+# IDE
+.idea/
+*.iml
+
+# OS
+.DS_Store
+Thumbs.db
