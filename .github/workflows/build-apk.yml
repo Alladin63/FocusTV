@@ -1,221 +1,154 @@
-name: FocusTV Build APK
+name: Build MaX-TV APK
 
 on:
   push:
-    branches:
-      - main
+    branches: [ main, master, develop ]
+  pull_request:
+    branches: [ main, master ]
   workflow_dispatch:
 
-permissions:
-  contents: read
-  actions: read
-  issues: write
-
-concurrency:
-  group: focustv-build-${{ github.ref }}
-  cancel-in-progress: true
+env:
+  JAVA_VERSION: '17'
 
 jobs:
   build:
-    name: Build debug APK
+    name: Build & Release APK
     runs-on: ubuntu-latest
+    timeout-minutes: 60
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
-      - name: Prepare report folder
-        run: |
-          mkdir -p build_reports
-          echo "# FocusTV - Rapport de build" > build_reports/BUILD_ERROR_REPORT.md
-          echo "" >> build_reports/BUILD_ERROR_REPORT.md
-          echo "- Date UTC : $(date -u)" >> build_reports/BUILD_ERROR_REPORT.md
-          echo "- Repository : $GITHUB_REPOSITORY" >> build_reports/BUILD_ERROR_REPORT.md
-          echo "- Branche : $GITHUB_REF_NAME" >> build_reports/BUILD_ERROR_REPORT.md
-          echo "- Commit : $GITHUB_SHA" >> build_reports/BUILD_ERROR_REPORT.md
-          echo "- Run : https://github.com/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" >> build_reports/BUILD_ERROR_REPORT.md
-          echo "" >> build_reports/BUILD_ERROR_REPORT.md
-          echo "## Environnement initial" >> build_reports/BUILD_ERROR_REPORT.md
-          echo '```text' >> build_reports/BUILD_ERROR_REPORT.md
-          uname -a >> build_reports/BUILD_ERROR_REPORT.md
-          pwd >> build_reports/BUILD_ERROR_REPORT.md
-          echo '```' >> build_reports/BUILD_ERROR_REPORT.md
-
-      - name: Setup Java
+      - name: Set up JDK ${{ env.JAVA_VERSION }}
         uses: actions/setup-java@v4
         with:
-          distribution: temurin
-          java-version: "17"
+          java-version: ${{ env.JAVA_VERSION }}
+          distribution: 'temurin'
+          cache: gradle
 
-      - name: Setup Gradle
-        uses: gradle/actions/setup-gradle@v4
+      - name: Cache Gradle packages
+        uses: actions/cache@v4
         with:
-          gradle-version: "8.10.2"
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties', '**/libs.versions.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-gradle-
 
-      - name: Prepare Android SDK
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Generate Gradle Wrapper
         run: |
-          set -o pipefail
-
-          echo "ANDROID_HOME=${ANDROID_HOME}" | tee build_reports/android_sdk.log
-          echo "ANDROID_SDK_ROOT=${ANDROID_SDK_ROOT}" | tee -a build_reports/android_sdk.log
-
-          if [ -z "$ANDROID_HOME" ]; then
-            if [ -n "$ANDROID_SDK_ROOT" ]; then
-              echo "ANDROID_HOME=$ANDROID_SDK_ROOT" >> "$GITHUB_ENV"
-              export ANDROID_HOME="$ANDROID_SDK_ROOT"
-            else
-              echo "ANDROID_HOME=/usr/local/lib/android/sdk" >> "$GITHUB_ENV"
-              export ANDROID_HOME="/usr/local/lib/android/sdk"
-            fi
+          if [ ! -f gradlew ]; then
+            curl -sL https://services.gradle.org/distributions/gradle-8.7-bin.zip -o /tmp/gradle.zip
+            unzip -q /tmp/gradle.zip -d /tmp/gradle
+            /tmp/gradle/gradle-8.7/bin/gradle wrapper --gradle-version 8.7 --distribution-type bin
           fi
+          chmod +x gradlew
 
-          echo "$ANDROID_HOME/platform-tools" >> "$GITHUB_PATH"
-          echo "$ANDROID_HOME/cmdline-tools/latest/bin" >> "$GITHUB_PATH"
-
-          SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
-
-          if [ ! -f "$SDKMANAGER" ]; then
-            SDKMANAGER="$(find "$ANDROID_HOME" -name sdkmanager -type f | head -n 1)"
-          fi
-
-          if [ -z "$SDKMANAGER" ] || [ ! -f "$SDKMANAGER" ]; then
-            echo "ERREUR : sdkmanager introuvable." | tee -a build_reports/android_sdk.log
-            find "$ANDROID_HOME" -maxdepth 4 -type f | sort | tee -a build_reports/android_sdk.log
-            exit 1
-          fi
-
-          echo "sdkmanager utilisé : $SDKMANAGER" | tee -a build_reports/android_sdk.log
-          "$SDKMANAGER" --version 2>&1 | tee -a build_reports/android_sdk.log
-          yes | "$SDKMANAGER" --licenses 2>&1 | tee -a build_reports/android_sdk.log || true
-          "$SDKMANAGER" "platform-tools" "platforms;android-35" "build-tools;35.0.0" 2>&1 | tee -a build_reports/android_sdk.log
-
-      - name: Validate project files
+      - name: Inject secrets into local.properties
         run: |
-          set -o pipefail
+          echo "TMDB_TOKEN=${{ vars.TMDB_TOKEN }}" >> local.properties
+          echo "FANART_TOKEN=${{ vars.FANART_TOKEN }}" >> local.properties
+          echo "EPG_URL=${{ vars.EPG_URL }}" >> local.properties
+          echo "sdk.dir=$ANDROID_SDK_ROOT" >> local.properties
 
-          echo "## Vérification fichiers projet" >> build_reports/BUILD_ERROR_REPORT.md
-
-          REQUIRED_FILES=(
-            "settings.gradle.kts"
-            "build.gradle.kts"
-            "gradle.properties"
-            "android_app/build.gradle.kts"
-            "android_app/src/main/AndroidManifest.xml"
-            "android_app/src/main/java/com/focustv/MainActivity.java"
-          )
-
-          for f in "${REQUIRED_FILES[@]}"; do
-            if [ ! -f "$f" ]; then
-              echo "ERREUR : fichier manquant : $f" | tee -a build_reports/project_check.log
-              exit 1
-            fi
-          done
-
-          echo "Tous les fichiers requis sont présents." | tee build_reports/project_check.log
-          find . -maxdepth 4 -type f | sort | sed 's#^./##' | tee build_reports/tree_before_build.log
-
-      - name: Build APK
+      - name: Build Release APK
+        id: build
         run: |
-          set -o pipefail
-          gradle --version 2>&1 | tee build_reports/gradle_version.log
-          gradle :android_app:assembleDebug --stacktrace --info --warning-mode all 2>&1 | tee build_reports/gradle_build.log
+          ./gradlew assembleRelease --no-daemon --stacktrace 2>&1 | tee build-full.log
+          EXIT_CODE=${PIPESTATUS[0]}
+          echo "build_exit_code=$EXIT_CODE" >> $GITHUB_OUTPUT
+          exit $EXIT_CODE
+        continue-on-error: true
 
-      - name: Copy APK
-        if: success()
+      - name: Extract error log on failure
+        if: steps.build.outputs.build_exit_code != '0'
         run: |
-          mkdir -p release_apk
-          find android_app/build/outputs/apk -name "*.apk" -type f -print0 | while IFS= read -r -d '' apk; do
-            cp "$apk" release_apk/
-          done
-          ls -la release_apk
+          echo "=== BUILD FAILED ===" > build-error.log
+          echo "Date: $(date)" >> build-error.log
+          echo "Commit: ${{ github.sha }}" >> build-error.log
+          echo "Branch: ${{ github.ref_name }}" >> build-error.log
+          echo "" >> build-error.log
+          echo "=== ERRORS ===" >> build-error.log
+          grep -A 30 "FAILURE\|error:" build-full.log | head -300 >> build-error.log || true
+          echo "" >> build-error.log
+          echo "=== FULL LOG (last 500 lines) ===" >> build-error.log
+          tail -500 build-full.log >> build-error.log
 
-      - name: Upload APK
-        if: success()
+      - name: Upload error log
+        if: steps.build.outputs.build_exit_code != '0'
         uses: actions/upload-artifact@v4
         with:
-          name: FocusTV-debug-apk
-          path: release_apk/*.apk
-          if-no-files-found: error
+          name: build-error-log
+          path: build-error.log
+          retention-days: 30
 
-      - name: Complete error report
-        if: failure()
+      - name: Fail if build error
+        if: steps.build.outputs.build_exit_code != '0'
+        run: exit 1
+
+      - name: Sign APK
+        id: sign
+        uses: r0adkll/sign-android-release@v1
+        with:
+          releaseDirectory: app/build/outputs/apk/release
+          signingKeyBase64: ${{ secrets.KEYSTORE_BASE64 }}
+          alias: ${{ secrets.KEY_ALIAS }}
+          keyStorePassword: ${{ secrets.KEYSTORE_PASSWORD }}
+          keyPassword: ${{ secrets.KEY_PASSWORD }}
+        continue-on-error: true
+
+      - name: Rename and package APK
         run: |
-          REPORT="build_reports/BUILD_ERROR_REPORT.md"
+          VERSION=$(grep -oP 'versionName\s*=\s*"\K[^"]+' app/build.gradle.kts | head -1 || echo "1.0.0")
+          BUILD_NUM=${{ github.run_number }}
+          APK_DIR="app/build/outputs/apk/release"
+          if [ -f "${{ steps.sign.outputs.signedReleaseFile }}" ]; then
+            cp "${{ steps.sign.outputs.signedReleaseFile }}" "MaX-TV-v${VERSION}-build${BUILD_NUM}-signed.apk"
+          else
+            APK=$(find $APK_DIR -name "*.apk" | head -1)
+            cp "$APK" "MaX-TV-v${VERSION}-build${BUILD_NUM}.apk"
+          fi
+          echo "APK_FILE=$(ls MaX-TV-*.apk | head -1)" >> $GITHUB_ENV
+          echo "VERSION=$VERSION" >> $GITHUB_ENV
+          echo "BUILD_NUM=$BUILD_NUM" >> $GITHUB_ENV
 
-          echo "" >> "$REPORT"
-          echo "## Résumé automatique" >> "$REPORT"
-          echo "" >> "$REPORT"
-
-          for f in build_reports/project_check.log build_reports/android_sdk.log build_reports/gradle_version.log build_reports/gradle_build.log build_reports/tree_before_build.log; do
-            if [ -f "$f" ]; then
-              echo "" >> "$REPORT"
-              echo "### $f" >> "$REPORT"
-              echo '```text' >> "$REPORT"
-              tail -n 240 "$f" >> "$REPORT"
-              echo '```' >> "$REPORT"
-            fi
-          done
-
-          echo "" >> "$REPORT"
-          echo "## Arborescence utile finale" >> "$REPORT"
-          echo '```text' >> "$REPORT"
-          find . -maxdepth 5 -type f | sort | sed 's#^./##' | head -n 700 >> "$REPORT"
-          echo '```' >> "$REPORT"
-
-      - name: Upload error report
-        if: failure()
+      - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: FocusTV-error-report
-          path: build_reports/
-          if-no-files-found: warn
+          name: MaX-TV-APK-build${{ github.run_number }}
+          path: MaX-TV-*.apk
+          retention-days: 90
 
-      - name: Create GitHub issue on failure
-        if: failure()
+      - name: Create GitHub Release
+        if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ env.VERSION }}-build${{ env.BUILD_NUM }}
+          name: "MaX-TV v${{ env.VERSION }} (build ${{ env.BUILD_NUM }})"
+          body: |
+            ## 🎬 MaX-TV v${{ env.VERSION }} — Build #${{ env.BUILD_NUM }}
+
+            **Commit:** ${{ github.sha }}
+            **Message:** ${{ github.event.head_commit.message }}
+
+            ### 📦 Installation Android TV / Fire TV
+            1. Télécharger le fichier APK ci-dessous
+            2. Activer "Sources inconnues" dans les paramètres
+            3. Installer via Downloader ou USB
+
+            ### 🔧 Compatibilité
+            - Android TV 7.0+ (API 24+)
+            - Fire TV Stick 4K / Fire TV Cube
+            - Nvidia Shield TV
+          files: MaX-TV-*.apk
+          draft: false
+          prerelease: false
         env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          python3 - <<'PY'
-          import json
-          import os
-          import urllib.request
-
-          repo = os.environ.get("GITHUB_REPOSITORY")
-          token = os.environ.get("GH_TOKEN")
-          run_id = os.environ.get("GITHUB_RUN_ID")
-          run_number = os.environ.get("GITHUB_RUN_NUMBER")
-          report_path = "build_reports/BUILD_ERROR_REPORT.md"
-
-          title = "Build APK échoué - FocusTV #{}".format(run_number)
-
-          if os.path.exists(report_path):
-              with open(report_path, "r", encoding="utf-8") as f:
-                  body = f.read()
-          else:
-              body = "# Build APK échoué\n\nRapport non généré correctement."
-
-          body += "\n\nLien du run : https://github.com/{}/actions/runs/{}\n".format(repo, run_id)
-
-          payload = json.dumps({
-              "title": title,
-              "body": body,
-              "labels": ["build-error", "apk", "FocusTV"]
-          }).encode("utf-8")
-
-          req = urllib.request.Request(
-              "https://api.github.com/repos/{}/issues".format(repo),
-              data=payload,
-              headers={
-                  "Authorization": "Bearer {}".format(token),
-                  "Accept": "application/vnd.github+json",
-                  "Content-Type": "application/json"
-              },
-              method="POST"
-          )
-
-          try:
-              with urllib.request.urlopen(req, timeout=30) as response:
-                  print(response.read().decode("utf-8"))
-          except Exception as e:
-              print("Issue GitHub non créée automatiquement :", e)
-          PY
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

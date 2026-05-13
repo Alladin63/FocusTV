@@ -1,6 +1,31 @@
-node_modules
-.expo
-build
-dist
+# Android
+*.iml
+.gradle
+/local.properties
+/.idea
+.DS_Store
+/build
+/captures
+.externalNativeBuild
+.cxx
+*.apk
+*.aab
+*.keystore
+*.jks
+
+# Gradle
+.gradle/
+build/
+out/
+
+# Secrets locaux
+local.properties
+keystore.properties
+
+# Logs
 *.log
-.env
+build-output.log
+
+# IDE
+.idea/
+*.iml
